@@ -1,6 +1,7 @@
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const safeImage=s=>typeof s==='string'&&/^data:image\/(png|jpeg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(s)?s:'';
+const cloud=window.shizhiCloud;
+const safeImage=s=>typeof s==='string'&&(/^data:image\/(png|jpeg|webp|gif);base64,[a-zA-Z0-9+/=]+$/.test(s)||cloud.isPublicImage(s))?s:'';
 const seed=[
 {id:'demo-1',title:'从零开始，理解设计中的配色',category:'设计创意',minutes:15,summary:'告别凭感觉选颜色，掌握色彩搭配的基础逻辑，让你的设计更有秩序。',art:1,symbol:'Aa',word:'COLOR & CREATIVE',steps:[{title:'从一个主色开始',text:'先想一想你的作品想传达什么感受。平静、自然的主题适合低饱和度绿色；活泼的主题可以尝试明亮的暖色。\n选定一个主色，再选一个相近的浅色作为背景。'},{title:'用比例建立秩序',text:'尝试 60 / 30 / 10 的配色比例：60% 用于背景，30% 用于主要内容，10% 用作强调。\n这只是起点，可以根据实际效果调整。'},{title:'检查文字是否清晰',text:'将正文放在背景上，检查阅读是否轻松。避免在浅色背景上使用太浅的文字，也不要只靠颜色表达状态。\n练习：用同一份内容制作两套配色，比较哪一套更容易阅读。'}]},
 {id:'demo-2',title:'搭建属于自己的知识管理系统',category:'效率办公',minutes:20,summary:'从收集到输出，用简单的方法，把零散的知识变成可以调用的能力。',art:2,symbol:'▤',word:'ORGANIZE YOUR MIND',steps:[{title:'建立一个统一收件箱',text:'为临时收集的文章、想法和笔记建立一个入口。先记录，再整理，降低收集的成本。'},{title:'围绕问题整理笔记',text:'用「我要解决什么问题」代替大量复杂分类。每条笔记写上来源和你自己的理解。'},{title:'每周做一次小回顾',text:'用 15 分钟清空收件箱。选一条笔记，写出一个可以马上使用的行动。知识在使用时才会变得熟悉。'}]},
@@ -9,14 +10,25 @@ const seed=[
 {id:'demo-5',title:'用番茄工作法，找回专注的节奏',category:'效率办公',minutes:8,summary:'一次只做一件事，建立适合自己的专注与休息节奏，让行动轻一点。',art:5,symbol:'◷',word:'MAKE TIME FOR FOCUS',steps:[{title:'选一个足够小的任务',text:'把「写完报告」改为「写出报告的三个要点」。任务需要清楚，并能在一次专注中推进。'},{title:'专注 25 分钟',text:'设置计时器，关掉通知。如果想到别的事，把它记在纸上，然后回到当前任务。时间长度可以根据自己调整。'},{title:'休息，然后回顾',text:'起身活动，休息 5 分钟。结束后记录刚才完成的内容，再决定下一步。不要用一次没完成来评价自己的能力。'}]},
 {id:'demo-6',title:'给绿植新手的第一份养护指南',category:'生活技能',minutes:10,summary:'了解光照、浇水与日常观察，和你的第一株绿植一起慢慢生长。',art:6,symbol:'✳',word:'GROW A LITTLE DAILY',steps:[{title:'先认识你的植物',text:'确认植物的品种和基本需求。不同品种对光照、温度和水分的需求差别很大，先查找对应养护说明。'},{title:'观察光照与土壤',text:'记录摆放位置一天中的光照变化。浇水前检查土壤状态，避免只按固定日期机械浇水。花盆需要有排水孔。'},{title:'建立一份观察记录',text:'每周拍一张照片，记录叶片变化、浇水时间和环境变化。遇到异常先辨别原因，再调整一个因素观察。'}]}
 ].map((t,i)=>({...t,createdAt:Date.now()-i*86400000,mine:false,cover:'',saved:false,status:'new'}));
-let db,tutorials=[],view='all',category='全部',query='',currentId=null,editingId=null,cover='',toastTimer,pendingImages=0;
+let admin=false,cloudReady=false,syncing=false,lastRemote=[],db,tutorials=[],view='all',category='全部',query='',currentId=null,editingId=null,cover='',toastTimer,pendingImages=0;
 function toast(message){$('#toast').textContent=message;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),3200)}
-function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('shizhi-learning',1);r.onupgradeneeded=()=>r.result.createObjectStore('tutorials',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
+function openDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('shizhi-cloud-progress',1);r.onupgradeneeded=()=>r.result.createObjectStore('tutorials',{keyPath:'id'});r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 function transaction(mode,action){return new Promise((resolve,reject)=>{const tx=db.transaction('tutorials',mode);let value;action(tx.objectStore('tutorials'),x=>value=x);tx.oncomplete=()=>resolve(value);tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error)})}
-async function put(t){await transaction('readwrite',store=>store.put(t));const i=tutorials.findIndex(x=>x.id===t.id);if(i<0)tutorials.push(t);else tutorials[i]=t;render()}
+function localMeta(t){return {id:t.id,saved:!!t.saved,status:t.status||'new'};}
+function replaceTutorial(t){const i=tutorials.findIndex(x=>x.id===t.id);if(i<0)tutorials.push(t);else tutorials[i]=t;render();}
+async function put(t){
+  replaceTutorial(t);
+  if(db) await transaction('readwrite',store=>store.put(localMeta(t)));
+}
+async function publishTutorial(t){
+  const remote=await cloud.publish(t);
+  const merged={...remote,saved:!!t.saved,status:t.status||'new',mine:true};
+  replaceTutorial(merged);
+  if(db) try{await transaction('readwrite',store=>store.put(localMeta(merged)));}catch{toast('教程已发布，但本机学习状态保存失败');}
+}
 const art=t=>`<div class="art-cover cover-${t.art||2}"><div class="cover-dot"></div><div class="cover-line"></div><div class="cover-shape">${esc(t.symbol||'▤')}</div><span class="cover-word">${esc(t.word||'LEARN & GROW')}</span></div>`;
 function render(){
-const names={all:['我的教程库','让每一份知识，都有迹可循。'],saved:['我的收藏','把值得反复学习的内容，放在手边。'],progress:['继续学习','每一步，都让你离目标更近一点。'],mine:['我的创作','把学会的知识，写成自己的教程。']};$('#view-title').innerHTML=names[view][0]+' <span id="library-count"></span>';$('#view-subtitle').textContent=names[view][1];
+const names={all:['公开教程库','让每一份知识，都有迹可循。'],saved:['我的收藏','把值得反复学习的内容，放在手边。'],progress:['继续学习','每一步，都让你离目标更近一点。'],mine:['我的创作','把学会的知识，写成自己的教程。']};$('#view-title').innerHTML=names[view][0]+' <span id="library-count"></span>';$('#view-subtitle').textContent=names[view][1];
 $('#all-count').textContent=tutorials.length;$('#saved-count').textContent=tutorials.filter(t=>t.saved).length;
 const cats=['全部','设计创意','效率办公','编程技术','生活技能','其他'];$('#filters').innerHTML=cats.map(c=>`<button class="filter ${category===c?'active':''}" data-category="${c}">${c}</button>`).join('');
 let list=tutorials.filter(t=>(view==='all'||view==='saved'&&t.saved||view==='progress'&&t.status==='reading'||view==='mine'&&t.mine)&&(category==='全部'||t.category===category)&&[t.title,t.summary,t.category,...t.steps.map(s=>s.title+' '+s.text)].join(' ').toLowerCase().includes(query.toLowerCase()));
@@ -24,8 +36,8 @@ const sort=$('#sort').value;list.sort(sort==='title'?(a,b)=>a.title.localeCompar
 $('#cards').innerHTML=list.map(t=>`<article class="card"><button class="bookmark ${t.saved?'saved':''}" data-save="${esc(t.id)}" title="${t.saved?'取消收藏':'收藏教程'}" aria-label="${t.saved?'取消收藏':'收藏'}：${esc(t.title)}" aria-pressed="${!!t.saved}">${t.saved?'♥':'♡'}</button><button class="card-open" data-open="${esc(t.id)}"><div class="card-cover">${safeImage(t.cover)?`<img src="${t.cover}" alt="${esc(t.title)}封面">`:art(t)}</div><div class="card-body"><span class="card-category">${esc(t.category)}</span><h3>${esc(t.title)}</h3><p>${esc(t.summary)}</p><div class="card-meta"><span>◷ ${t.minutes} 分钟 · ${t.steps.length} 个步骤</span><span class="learning">${t.status==='done'?'已学完 ✓':t.status==='reading'?'学习中 ↗':t.mine?'我的创作':'图文教程 ↗'}</span></div></div></button></article>`).join('')}
 function addStep(data={}){const el=document.createElement('section');el.className='step-edit';el.innerHTML=`<div class="step-bar"><span>步骤</span><button type="button" class="remove-step text-btn">移除</button></div><input class="step-title" placeholder="步骤标题" required maxlength="100" value="${esc(data.title||'')}"><textarea class="step-text" placeholder="详细描述这一步的操作方法…" required maxlength="20000">${esc(data.text||'')}</textarea><label class="step-image-label">▧ 添加 / 替换步骤图片<input class="step-upload" type="file" accept="image/*" hidden></label><img class="step-image" alt="步骤配图" ${safeImage(data.image)?`src="${data.image}"`:'hidden'}><button class="clear-image text-btn" type="button" ${safeImage(data.image)?'':'hidden'}>移除图片</button>`;$('#steps-editor').append(el);renumber()}
 function renumber(){$$('.step-edit').forEach((s,i)=>s.querySelector('.step-bar span').textContent=`步骤 ${String(i+1).padStart(2,'0')}`)}
-function openEditor(t){editingId=t?.id||null;cover=t?.cover||'';$('#editor-form').reset();$('#editor-title').textContent=t?'编辑图文教程':'创建图文教程';$('#title').value=t?.title||'';$('#summary').value=t?.summary||'';$('#category').value=t?.category||'设计创意';$('#minutes').value=t?.minutes||10;$('#cover-preview').hidden=!cover;$('#cover-preview').src=cover||'';$('#steps-editor').innerHTML='';(t?.steps||[{}]).forEach(addStep);$('#reader').close();$('#editor').showModal()}
-async function readTutorial(id){const t=tutorials.find(t=>t.id===id);if(!t)return;currentId=id;if(t.status==='new'){try{await put({...t,status:'reading'})}catch{toast('学习状态保存失败，请检查浏览器存储')}}$('#reader-content').innerHTML=`<span class="card-category">${esc(t.category)}</span><h1>${esc(t.title)}</h1><p class="intro">${esc(t.summary)}</p><p class="intro">◷ 约 ${t.minutes} 分钟 · ${t.steps.length} 个学习步骤${t.mine?'':' · 示例教程'}</p>${safeImage(t.cover)?`<img class="read-cover" src="${t.cover}" alt="教程封面">`:''}${t.steps.map((s,i)=>`<section class="read-step"><h3><span>${String(i+1).padStart(2,'0')}</span>${esc(s.title)}</h3><p>${esc(s.text)}</p>${safeImage(s.image)?`<img src="${s.image}" alt="${esc(s.title)}的步骤图片" loading="lazy">`:''}</section>`).join('')}`;$('#read-status').textContent=t.status==='done'?'你已完成这篇教程，随时可以复习。':'按照自己的节奏，一步一步来。';$('#complete-btn').textContent=t.status==='done'?'重新学习 ↻':'完成学习 ✓';$('#reader').showModal();$('#reader').scrollTop=0}
+function openEditor(t){if(!cloudReady)return toast('尚未连接云端，请先完成配置或刷新重试');if(!admin){$('#login').showModal();return;}editingId=t?.id||null;cover=t?.cover||'';$('#editor-form').reset();$('#editor-title').textContent=t?'编辑图文教程':'创建图文教程';$('#title').value=t?.title||'';$('#summary').value=t?.summary||'';$('#category').value=t?.category||'设计创意';$('#minutes').value=t?.minutes||10;$('#cover-preview').hidden=!cover;$('#cover-preview').src=cover||'';$('#steps-editor').innerHTML='';(t?.steps||[{}]).forEach(addStep);$('#reader').close();$('#editor').showModal()}
+async function readTutorial(id){$('#edit-btn').hidden=!admin;$('#delete-btn').hidden=!admin;const t=tutorials.find(t=>t.id===id);if(!t)return;currentId=id;if(t.status==='new'){try{await put({...t,status:'reading'})}catch{toast('学习状态保存失败，请检查浏览器存储')}}$('#reader-content').innerHTML=`<span class="card-category">${esc(t.category)}</span><h1>${esc(t.title)}</h1><p class="intro">${esc(t.summary)}</p><p class="intro">◷ 约 ${t.minutes} 分钟 · ${t.steps.length} 个学习步骤 · 公开教程</p>${safeImage(t.cover)?`<img class="read-cover" src="${t.cover}" alt="教程封面">`:''}${t.steps.map((s,i)=>`<section class="read-step"><h3><span>${String(i+1).padStart(2,'0')}</span>${esc(s.title)}</h3><p>${esc(s.text)}</p>${safeImage(s.image)?`<img src="${s.image}" alt="${esc(s.title)}的步骤图片" loading="lazy">`:''}</section>`).join('')}`;$('#read-status').textContent=t.status==='done'?'你已完成这篇教程，随时可以复习。':'按照自己的节奏，一步一步来。';$('#complete-btn').textContent=t.status==='done'?'重新学习 ↻':'完成学习 ✓';$('#reader').showModal();$('#reader').scrollTop=0}
 function imageData(file){return new Promise((resolve,reject)=>{if(!file||!file.type.startsWith('image/'))return reject(Error('请选择图片文件'));if(file.size>10*1024*1024)return reject(Error('图片需小于 10 MB'));const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{const ratio=Math.min(1,1600/Math.max(img.width,img.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*ratio));canvas.height=Math.max(1,Math.round(img.height*ratio));canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);URL.revokeObjectURL(url);resolve(canvas.toDataURL('image/webp',.86))};img.onerror=()=>{URL.revokeObjectURL(url);reject(Error('无法读取这张图片，请换一张'))};img.src=url})}
 async function handleImage(file,callback){pendingImages++;$('#save-btn').disabled=true;try{callback(await imageData(file))}catch(e){toast(e.message)}finally{pendingImages--;$('#save-btn').disabled=!!pendingImages}}
 $('#create-btn').onclick=()=>openEditor();$('#empty-create').onclick=()=>openEditor();$('#add-step').onclick=()=>addStep();$$('.close').forEach(b=>b.onclick=()=>b.closest('dialog').close());
@@ -34,10 +46,94 @@ $('#cards').onclick=async e=>{const save=e.target.closest('[data-save]'),open=e.
 $('#cover-input').onchange=e=>{const file=e.target.files[0];if(file)handleImage(file,data=>{cover=data;$('#cover-preview').src=data;$('#cover-preview').hidden=false})};
 $('#steps-editor').onclick=e=>{const el=e.target.closest('.step-edit');if(e.target.closest('.remove-step')){if($$('.step-edit').length===1)return toast('请至少保留一个学习步骤');el.remove();renumber()}if(e.target.closest('.clear-image')){el.querySelector('.step-image').removeAttribute('src');el.querySelector('.step-image').hidden=true;el.querySelector('.clear-image').hidden=true}};
 $('#steps-editor').onchange=e=>{if(e.target.matches('.step-upload')&&e.target.files[0]){const el=e.target.closest('.step-edit');handleImage(e.target.files[0],data=>{el.querySelector('.step-image').src=data;el.querySelector('.step-image').hidden=false;el.querySelector('.clear-image').hidden=false})}};
-$('#editor-form').onsubmit=async e=>{e.preventDefault();if(pendingImages)return toast('图片处理中，请稍候');const title=$('#title').value.trim(),summary=$('#summary').value.trim(),steps=$$('.step-edit').map(el=>({title:el.querySelector('.step-title').value.trim(),text:el.querySelector('.step-text').value.trim(),image:safeImage(el.querySelector('.step-image').getAttribute('src'))}));if(!title||!summary||steps.some(s=>!s.title||!s.text))return toast('请填写名称、介绍和每一步的内容');const previous=tutorials.find(t=>t.id===editingId);const t={...previous,id:editingId||crypto.randomUUID(),title,summary,category:$('#category').value,minutes:Number($('#minutes').value),cover,steps,mine:true,createdAt:previous?.createdAt||Date.now(),saved:previous?.saved||false,status:previous?.status||'new',art:previous?.art||2};$('#save-btn').disabled=true;try{await put(t);$('#editor').close();toast('教程已保存，开始新的学习吧')}catch{toast('保存失败，浏览器存储可能已满。请导出备份并减少图片。')}finally{$('#save-btn').disabled=false}};
-$('#edit-btn').onclick=()=>openEditor(tutorials.find(t=>t.id===currentId));$('#delete-btn').onclick=async()=>{const t=tutorials.find(t=>t.id===currentId);if(!confirm(`确定删除「${t.title}」？此操作无法撤销。`))return;try{await transaction('readwrite',store=>store.delete(currentId));tutorials=tutorials.filter(x=>x.id!==currentId);$('#reader').close();render();toast('教程已删除')}catch{toast('删除失败，请稍后重试')}};
+$('#editor-form').onsubmit=async e=>{e.preventDefault();if(pendingImages)return toast('图片处理中，请稍候');const title=$('#title').value.trim(),summary=$('#summary').value.trim(),steps=$$('.step-edit').map(el=>({title:el.querySelector('.step-title').value.trim(),text:el.querySelector('.step-text').value.trim(),image:safeImage(el.querySelector('.step-image').getAttribute('src'))}));if(!title||!summary||steps.some(s=>!s.title||!s.text))return toast('请填写名称、介绍和每一步的内容');const previous=tutorials.find(t=>t.id===editingId);const t={...previous,id:editingId||crypto.randomUUID(),title,summary,category:$('#category').value,minutes:Number($('#minutes').value),cover,steps,mine:true,createdAt:previous?.createdAt||Date.now(),saved:previous?.saved||false,status:previous?.status||'new',art:previous?.art||2};$('#save-btn').disabled=true;try{await publishTutorial(t);$('#editor').close();toast('已发布，所有访客刷新后都能看到')}catch(error){toast('发布失败：'+error.message)}finally{$('#save-btn').disabled=false}};
+$('#edit-btn').onclick=()=>openEditor(tutorials.find(t=>t.id===currentId));$('#delete-btn').onclick=async()=>{if(!admin)return toast('请先使用管理员账号登录');const t=tutorials.find(t=>t.id===currentId);if(!confirm(`确定删除「${t.title}」？此操作无法撤销。`))return;try{await cloud.remove(t);if(db)try{await transaction('readwrite',store=>store.delete(currentId));}catch{}tutorials=tutorials.filter(x=>x.id!==currentId);$('#reader').close();render();toast('教程已从云端删除')}catch(error){toast('删除失败：'+error.message)}};
 $('#complete-btn').onclick=async()=>{const t=tutorials.find(t=>t.id===currentId);try{await put({...t,status:t.status==='done'?'reading':'done'});$('#reader').close();toast(t.status==='done'?'已重新开始学习':'又掌握了一点新知识，继续保持！')}catch{toast('状态保存失败，请稍后重试')}};
-$('#export-btn').onclick=()=>{const blob=new Blob([JSON.stringify({format:'shizhi-v1',tutorials},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`拾知教程备份-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('备份已导出，包含教程文字与图片')};$('#import-btn').onclick=()=>$('#import-file').click();
+$('#export-btn').onclick=async()=>{
+  const button=$('#export-btn');button.disabled=true;button.textContent='正在导出…';
+  try{
+    const items=JSON.parse(JSON.stringify(tutorials));
+    async function embed(value){if(!cloud.isPublicImage(value))return value;const r=await fetch(value);if(!r.ok)throw Error('图片读取失败，请稍后重试');const blob=await r.blob();return await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob);});}
+    for(const t of items){t.cover=await embed(t.cover);for(const s of t.steps)s.image=await embed(s.image);delete t.remoteVersion;}
+    const blob=new Blob([JSON.stringify({format:'shizhi-v1',tutorials:items},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=`拾知教程备份-${new Date().toISOString().slice(0,10)}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);toast('备份已导出，包含教程文字与图片');
+  }catch(error){toast('导出失败：'+error.message);}finally{button.disabled=false;button.textContent='导出备份 ↗';}
+};
+$('#import-btn').onclick=()=>{if(!admin)return toast('请先使用管理员账号登录');$('#import-file').click();};
 function validateImport(data){if(data?.format!=='shizhi-v1'||!Array.isArray(data.tutorials)||data.tutorials.length>500)throw Error('请选择有效的拾知教程备份（最多 500 篇）');return data.tutorials.map(t=>{if(!t||typeof t.title!=='string'||!t.title.trim()||t.title.length>80||typeof t.summary!=='string'||t.summary.length>300||!Array.isArray(t.steps)||!t.steps.length||t.steps.length>100||t.steps.some(s=>!s||typeof s.title!=='string'||!s.title.trim()||s.title.length>100||typeof s.text!=='string'||!s.text.trim()||s.text.length>20000))throw Error('备份中的教程格式不完整');return{id:crypto.randomUUID(),title:t.title,summary:t.summary,category:['设计创意','效率办公','编程技术','生活技能','其他'].includes(t.category)?t.category:'其他',minutes:Math.min(999,Math.max(1,Number(t.minutes)||10)),cover:safeImage(t.cover),steps:t.steps.map(s=>({title:s.title,text:s.text,image:safeImage(s.image)})),createdAt:Date.now(),mine:true,saved:!!t.saved,status:['reading','done'].includes(t.status)?t.status:'new',art:2}})}
-$('#import-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>50*1024*1024)throw Error('备份文件不能超过 50 MB');const incoming=validateImport(JSON.parse(await file.text()));await transaction('readwrite',store=>incoming.forEach(t=>store.put(t)));tutorials.push(...incoming);render();toast(`已导入 ${incoming.length} 篇教程`)}catch(err){toast(err instanceof SyntaxError?'文件不是有效的 JSON 备份':err.message||'导入失败，请检查存储空间')}finally{e.target.value=''}};
-async function init(){try{db=await openDB();tutorials=await transaction('readonly',(store,set)=>{const r=store.getAll();r.onsuccess=()=>set(r.result)});if(!tutorials.length){await transaction('readwrite',store=>seed.forEach(t=>store.put(t)));tutorials=seed}render()}catch{toast('浏览器存储不可用，请允许此网站使用本地存储');$('#cards').innerHTML='<p>无法打开本地教程库，请检查浏览器隐私设置后刷新。</p>';$('#create-btn').disabled=true;$('#import-btn').disabled=true;$('#export-btn').disabled=true}}init();
+$('#import-file').onchange=async e=>{
+  const file=e.target.files[0];if(!file)return;
+  const button=$('#import-btn');button.disabled=true;
+  try{
+    if(!admin)throw Error('请先登录管理员账号');
+    if(file.size>50*1024*1024)throw Error('备份文件不能超过 50 MB');
+    const incoming=validateImport(JSON.parse(await file.text()));
+    if(!incoming.length)return toast('备份中没有教程');
+    if(!confirm(`将向所有访客发布 ${incoming.length} 篇教程，是否继续？`))return;
+    await cloud.publishMany(incoming);
+    await refreshLibrary();toast(`已向所有访客发布 ${incoming.length} 篇教程`);
+  }catch(error){toast(error instanceof SyntaxError?'文件不是有效的 JSON 备份':'导入失败：'+error.message);}
+  finally{e.target.value='';button.disabled=false;}
+};
+function updateAccess(){
+  ['#create-btn','#empty-create','#edit-btn','#delete-btn','#import-btn','#seed-btn','#legacy-btn'].forEach(s=>$(s).hidden=!admin||!cloudReady);
+  $('#auth-btn').textContent=admin?'退出管理':'管理员登录';
+  const mine=$('[data-view="mine"]');mine.hidden=!admin;
+  if(!admin&&view==='mine'){view='all';$$('.nav').forEach(n=>n.classList.toggle('active',n.dataset.view==='all'));}
+}
+function connectionStatus(message,isError=false){$('#cloud-status').textContent=message;$('#cloud-status').classList.toggle('error',isError);}
+async function refreshLibrary(){
+  if(syncing)return;syncing=true;$('#refresh-btn').disabled=true;
+  try{
+    connectionStatus('正在同步公开教程…');
+    const remote=await cloud.list();
+    const meta=new Map(tutorials.map(t=>[t.id,localMeta(t)]));
+    if(db)try{const stored=await transaction('readonly',(store,set)=>{const r=store.getAll();r.onsuccess=()=>set(r.result);});stored.forEach(t=>{if(!meta.has(t.id))meta.set(t.id,t);});}catch{db=null;toast('本机学习进度暂时无法保存，但仍可阅读与发布教程');}
+    lastRemote=remote;tutorials=remote.map(t=>({...t,saved:meta.get(t.id)?.saved||false,status:meta.get(t.id)?.status||'new',mine:admin}));
+    cloudReady=true;render();updateAccess();
+    connectionStatus('云端已同步 · '+new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'}));
+    $('#empty p').textContent=admin?'还没有教程，创建一篇或发布示例教程吧。':'这里还没有匹配的公开教程，稍后再来看看吧。';
+    return true;
+  }catch(error){connectionStatus('同步失败：'+error.message+' 点击「刷新教程」重试。',true);if(!cloudReady){$('#cards').innerHTML='<p class="connection-help">暂时无法加载公开教程，请稍后重试。</p>';$('#empty').hidden=true;}return false;}
+  finally{syncing=false;$('#refresh-btn').disabled=false;}
+}
+$('#auth-btn').onclick=async()=>{
+  if(!cloud.enabled)return toast('管理员需要先在 config.js 中连接云端项目');
+  if(!admin){$('#login').showModal();return;}
+  try{await cloud.logout();admin=false;tutorials.forEach(t=>t.mine=false);$('#editor').close();updateAccess();render();toast('已退出管理');}catch(error){toast(error.message);}
+};
+$('#login-form').onsubmit=async e=>{
+  e.preventDefault();$('#login-submit').disabled=true;$('#login-error').textContent='';
+  try{await cloud.login($('#admin-email').value.trim(),$('#admin-password').value);admin=true;$('#admin-password').value='';$('#login').close();await refreshLibrary();toast('已进入管理模式');}
+  catch(error){$('#login-error').textContent=error.message;}
+  finally{$('#login-submit').disabled=false;}
+};
+$('#refresh-btn').onclick=refreshLibrary;
+$('#seed-btn').onclick=async()=>{
+  if(!confirm('向所有访客发布 6 篇示例教程？'))return;
+  $('#seed-btn').disabled=true;
+  try{await cloud.publishMany(seed.map(t=>({...t,id:crypto.randomUUID()})));await refreshLibrary();toast('示例教程已发布');}
+  catch(error){toast(error.message);}finally{$('#seed-btn').disabled=false;}
+};
+$('#legacy-btn').onclick=async()=>{
+  $('#legacy-btn').disabled=true;
+  try{
+    if(!admin)throw Error('请先登录管理员账号');
+    const legacy=await new Promise((resolve,reject)=>{const request=indexedDB.open('shizhi-learning');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);});
+    let old=[];
+    try{if(legacy.objectStoreNames.contains('tutorials'))old=await new Promise((resolve,reject)=>{const r=legacy.transaction('tutorials').objectStore('tutorials').getAll();r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}finally{legacy.close();}
+    const items=validateImport({format:'shizhi-v1',tutorials:old.filter(t=>t.mine)});
+    if(!items.length)return toast('当前浏览器没有旧版创作，也可以使用「导入并发布」上传备份');
+    if(!confirm(`将当前浏览器的 ${items.length} 篇旧版创作发布给所有访客？`))return;
+    await cloud.publishMany(items);await refreshLibrary();toast('本机旧教程已发布');
+  }catch(error){toast('发布旧教程失败：'+error.message);}finally{$('#legacy-btn').disabled=false;}
+};
+async function init(){
+  updateAccess();
+  try{db=await openDB();}catch{toast('本机学习进度将仅在本次访问中保留');}
+  if(!cloud.enabled){connectionStatus('云端尚未连接：请管理员先完成部署包中的连接步骤。',true);$('#cards').innerHTML='<p class="connection-help">教程库等待管理员完成云端连接。</p>';$('#empty').hidden=true;return;}
+  try{admin=await cloud.isAdmin();}catch(error){connectionStatus(error.message,true);}
+  await refreshLibrary();
+  setInterval(()=>{if(!document.hidden&&!$$('dialog[open]').length)refreshLibrary();},45000);
+}
+init();
